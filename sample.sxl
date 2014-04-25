@@ -1,0 +1,19 @@
+/* Power function */
+function pow( x : real, n : int ) : real {
+	let y : int = 1.0;
+	if ( n > 0 ) {
+		while( n > 0 ) {
+			y <- y * x;
+			n <- n - 1;
+		}
+	} else {
+		while ( n < 0 ) {
+			y <- y / x;
+			n <- n + 1;
+		}
+	}
+	y;
+}
+
+let a : real = /** Can have comments here, coz yolo */ 5.0;
+a <- pow( a, 2.0 ); // Should give an error in parser
