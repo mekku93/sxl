@@ -12,6 +12,7 @@ vector<string> KEYWORDS {
 	"if",
 	"while",
 	"halt",
+	"in",
 
 	"and",
 	"or",
