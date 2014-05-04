@@ -7,6 +7,7 @@
 #include <string>
 #include <sstream>
 #include <fstream>
+#include <vector>
 #include "tokentype.h"
 #include "token.h"
 #include "keywords.h"
@@ -37,6 +38,16 @@ class Lexer {
 		// current token being generated. They should be popped and used next, in place
 		// of the next character in the file.
 		string storage;
+		// Bool flag, for indicating if done or not
+		// Used to prevent re-reading the last EOF character over and over again
+		bool done;
+		// Stream vector of tokens
+		vector <Token> tokens;
+		vector <Token>::iterator iterator;
+		// Verbose output
+		bool verbose = false;
+
+
 
 		string error(){
 			return string("Lexer: Unrecognized input. ");
@@ -51,10 +62,19 @@ class Lexer {
 	public:
 
 
+		Lexer() {
+			this->init("");
+		}
+
 		/**
 		 * Constructor
 		 */
 		Lexer(string filepath) {
+			this->init(filepath);
+		}
+		
+
+		void init(string filepath) {
 			// Save the filepath
 			this->filepath = filepath;
 			// Create an input file stream
@@ -66,9 +86,14 @@ class Lexer {
 			this->buffer = string("");
 			// Initialie the storage string
 			this->storage = string("");
+			// Set the done lfag to false
+			this->done = false;
 		}
-		
 
+		// Sets verbose output on or off
+		void setVerbose(bool v) {
+			this->verbose = v;
+		}
 
 
 		/**
@@ -194,12 +219,57 @@ class Lexer {
 		/**
 		 * Returns true if the end of the input has been reached.
 		 */
-		bool done() {
+		bool eof() {
 			return this->in->eof() || this->peek() == EOF;
+		}
+
+
+		/**
+		 * Returns true if the lexer has finished.
+		 */
+		bool isDone() {
+			return this->done;
 		}
 		
 
+		vector<Token>::iterator getPosition() {
+			return this->iterator;
+		}
+		void setPosition(vector<Token>::iterator it) {
+			this->iterator = it;
+		}
+		// Moves the iterator forward
+		void forward() {
+			this->iterator++;
+		}
+		// Moves the iterator backwards
+		void backwards() {
+			this->iterator--;
+		}
+		// Returns a pointer to the token, pointed to by the iterator
+		Token* getToken() {
+			return &(*this->iterator);
+		}
 
+		// Moves the iterator forward and returns the token
+		Token* nextToken() {
+			if ( this->iterator != this->tokens.end() ) {
+				Token* tk = &*this->iterator;
+				this->iterator++;
+				return tk;
+			} else {
+				return Token::nullToken(this->row,this->col);
+			}
+		}
+		Token* previousToken() {
+			this->iterator--;
+			if ( this->iterator != this->tokens.begin() ) {
+				Token* tk = &*this->iterator;
+				return tk;
+			} else {
+				return Token::nullToken(this->row, this->col);
+			}
+		}
 
 
 		/** 
@@ -214,13 +284,18 @@ class Lexer {
 		 *  i)	End of input has been reached.
 		 * ii)	No token could by determined from the input.
 		 */
-		Token* nextToken() {
-			Token* tk = new Token("","",0,0);
+		void generateTokens() {
 
-			// Flag to check if a token has been matched
-			bool matched = false;
+			// Loop if:
+			// 		not EOF or not empty store
+			// and	no match currently found
+			while ( !done || this->hasStore() ) {
 
-			while ( ( !this->done() || this->hasStore() ) && !matched ) {
+				// CURRENT TOKEN
+				Token* tk = Token::nullToken(this->row, this->col);
+
+				// Flag to check if a token has been matched
+				bool matched = false;
 
 				// Read the next character
 				// If there are characters in the store, pop the next one, otherwise read from file
@@ -241,8 +316,8 @@ class Lexer {
 							// Keep reading characters
 							ch = this->next();
 							this->pushToBuffer(ch);
-							// until an end of line is found
-						} while ( ch != '\n' );
+							// until an end of line/file is found
+						} while ( !(ch == '\n' || this->eof()) );
 						// Flush the buffer
 						this->flushBuffer();
 						continue;
@@ -255,7 +330,7 @@ class Lexer {
 							this->pushToBuffer(ch);
 							// Peek the one after that
 							p = this->peek();
-						} while ( !(ch == '*' && p == '/') );
+						} while ( !(ch == '*' && p == '/') && !this->eof() );
 						// Keep reading characters until the read character and the peeked
 						// one indicate a closing block comment
 						// Read the next character (the peeked '/')
@@ -326,11 +401,11 @@ class Lexer {
 							matched = true;
 						} else {
 							cout << this->error() << "Expected \"'\", found '"  << ch << "'" << this->filePos();
-							return Token::nullToken();
+							return;
 						}
 					} else {
 						cout << this->error() << "Expected a printable character, found '"  << ch << "'" << this->filePos();
-						return Token::nullToken();
+						return;
 					}
 				}
 
@@ -351,7 +426,26 @@ class Lexer {
 
 					// Create the token
 					string tk_image = this->flushBuffer();
-					string tk_type = ( isKeyword(tk_image) )? TK_KEYWORD : TK_IDENTIFIER;
+					string tk_type = "";
+					// If the image is a keyword
+					if ( isKeyword(tk_image) ) {
+						tk_type = TK_KEYWORD;
+						// Set the type to TK_BOOL if "true" or "false"
+						if ( tk_image == "false" || tk_image == "true" ) {
+							tk_type = TK_BOOL;
+						}
+						// Set the type to TK_MULT_OP if "and"
+						else if ( tk_image == "and" ) {
+							tk_type = TK_MULT_OP;
+						}
+						// Set the type to TK_ADD_OP if "or"
+						else if ( tk_image == "or" ) {
+							tk_type = TK_ADD_OP;
+						}
+					} else {
+						// If not a keyword, then an identifier
+						tk_type = TK_IDENTIFIER;
+					}
 					tk = new Token( tk_type, tk_image, this->getRow(), this->getCol() );
 					matched = true;
 				}
@@ -368,17 +462,38 @@ class Lexer {
 					}
 					// Set the type to an integer
 					string tk_type = TK_INTEGER;
+
 					// Check for a dot, i.e. reading a real, not an integer
 					if ( ch == '.' ) {
+
+						// <REAL>
 						// Loop until we don't find any more digits
 						do {
 							ch = this->next();
 							this->pushToBuffer(ch);
 						}
 						while( Lexer::isDigit(ch) );
+						// Check if last character was an 'E' or 'e'
+						if ( ch == 'E' || ch == 'e' ) {
+							char p = this->peek();
+							// check if the peek is a plus or minus
+							if ( p == '+' || p == '-' ) {
+								// if it is, get it and push it to the bufer
+								ch = this->next();
+								this->pushToBuffer(ch);
+								// Loop until we don't find any more digits
+								do {
+									ch = this->next();
+									this->pushToBuffer(ch);
+								}
+								while( Lexer::isDigit(ch) );
+							}
+						}
 						// End of reading the real number. Set the type to real
 						tk_type = TK_REAL;
-					}
+
+					} // End of <REAL> check
+
 					// Store the last character read (extra)
 					this->storeFromBuffer();
 					// Create token
@@ -402,12 +517,29 @@ class Lexer {
 					matched = true;
 				}
 
+				// Equals and not equals comparison
+				if ( (ch == '=' || ch == '!') && this->peek() == '=' ) {
+					// Push the first equals
+					this->pushToBuffer(ch);
+					// read the peeked char
+					ch = this->next();
+					// push the peeked equals
+					this->pushToBuffer(ch);
 
-				// SYNTAX SYMBOLS
+					// Create the token
+					tk = new Token( TK_REL_OP, this->flushBuffer(), this->getRow(), this->getCol() );
+					matched = true;
+				}
+
+
+				// IF NO MATCH FOUND SO FAR
 				if ( !matched ) {
-
+					// SYNTAX SYMBOLS
 					string tk_type("");
 					switch( ch ) {
+						case '#':
+							tk_type = TK_UNIT;
+							break;
 						case ':':
 							tk_type = TK_COLON;
 							break;
@@ -419,10 +551,10 @@ class Lexer {
 							break;
 
 						case '(':
-							tk_type = TK_OPEN_BRACE;
+							tk_type = TK_OPEN_PAREN;
 							break;
 						case ')':
-							tk_type = TK_CLOSE_BRACE;
+							tk_type = TK_CLOSE_PAREN;
 							break;
 						case '{':
 							tk_type = TK_OPEN_BLOCK;
@@ -442,6 +574,9 @@ class Lexer {
 							break;
 
 						case '=':
+							tk_type = TK_EQUALS_OP;
+							break;
+
 						case '>':
 						case '<':
 							// Relational operator
@@ -452,38 +587,47 @@ class Lexer {
 								this->pushToBuffer(ch);
 								// Get the following equals (pushed later after end of switch)
 								ch = this->next();
-							} else {
-								// If no peeked equals, and inital char was an equals,
-								if ( ch == '=' ) {
-									// Set the type to an equals op
-									tk_type = TK_EQUALS_OP;
-								}
 							}
+							break;
+						default:
+							if ( this->eof() ) tk_type = TK_EOF;
+							this->done = true;
+							break;
 
-					}
+					} // End of switch
+
 					// Push the last character read to the buffer
 					this->pushToBuffer(ch);
-
+					// If a syntax symbol was found
 					if ( tk_type.length() > 0 ) {
 						// Create the token
-						tk = new Token( tk_type, this->flushBuffer(), this->getRow(), this->getCol() );
+						string image = (tk_type == TK_EOF)? "eof" : this->flushBuffer();
+						tk = new Token( tk_type, image, this->getRow(), this->getCol() );
+					}
+
+				} // End of !matched check
+
+				// If not token was matched
+				if ( tk->isNullToken() ) {
+					// If not end of file, then unrecognized character was read
+					if ( !this->eof() ) {
+						cout << "Lexer: Unrecognized input '" << ch << "' at " << this->getFilePath() << ":" << this->getRow() << ":" << this->getCol() << endl;
+						return;
+					} else {
+						// Read EOF. We are done
+						this->done = true;
 					}
 				}
 
-				// Check if a token was matched
-				if ( tk->isNullToken() ) {
-					// Show an error if not
-					cout << "Lexer: Unrecognized input '" << ch << "' at " << this->getFilePath() << ":" << this->getRow() << ":" << this->getCol() << endl;
-					break;
-				} else {
-					matched = true;
+				// If there was a match, push the token back
+				this->tokens.push_back( *tk );
+				if ( this->verbose == true ) {
+					cout << tk->toString() << endl;
 				}
-			}
 
-			return tk;
+			} // End of while loop
+			this->iterator = tokens.begin();
 		}
-
-
 
 
 
