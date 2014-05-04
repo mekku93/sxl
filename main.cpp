@@ -2,17 +2,24 @@
 #include <string>
 
 #include "lexer.h"
+#include "parser.h"
 #include "token.h"
 
-int main() {
-	Lexer lexer("sample.sxl");
+int main(){
+	// Create the lexer, and generate the tokens from the file
+	Lexer* lexer = new Lexer("sample.sxl");
+	// lexer->setVerbose(true);
+	lexer->generateTokens();
 
-	Token* tk = new Token("","",0,0);
-
-	while ( !(tk = lexer.nextToken())->isNullToken() ) {
-		cout << tk->toString() << endl;
+	// Create the parser
+	Parser parser(lexer);
+	//parser.setVerbose(true);
+	try {
+		cout << parser.parseSXL()->toString() << endl;
+		cout << "\nDONE!!!!" << endl; 
+	} catch( ParseException &e ) {
+		cout << "\n" << e.what() << "\n" << endl;
 	}
-	cout << "\n\n";
 
 	return 0;
 }
